@@ -8,22 +8,15 @@ app.use(express.urlencoded({ limit: '100mb', extended: true }));
 
 const NVIDIA_API_KEY = process.env.NVIDIA_API_KEY;
 const NVIDIA_BASE_URL = 'https://api.nvcf.nvidia.com/v2/nvcf';
-
-// Маппинг моделей Janitor → NVIDIA NIM
-const MODEL_MAP = {
-  'deepseek-chat': 'deepseek/deepseek-chat',
-  'deepseek-v3.2': 'deepseek/deepseek-chat', // fallback на доступную модель
-  'default': 'deepseek/deepseek-chat'
-};
+const NIM_MODEL_ID = 'deepseek/deepseek-v3.2'; // ← заменено на запрошенную модель
 
 app.post('/v1/chat/completions', async (req, res) => {
   try {
-    const { model = 'deepseek-chat', messages, max_tokens = 2048, temperature = 0.7 } = req.body;
-    const nvidiaModel = MODEL_MAP[model] || MODEL_MAP['default'];
-
+    const { messages, max_tokens = 4096, temperature = 0.7 } = req.body;
+    
     const response = await axios.post(
-      `${NVIDIA_BASE_URL}/pexec/functions/${nvidiaModel}`,
-      { messages, max_tokens, temperature, top_p: 0.95 },
+      `${NVIDIA_BASE_URL}/pexec/functions/${NIM_MODEL_ID}`,
+      { messages, max_tokens, temperature, top_p: 0.95, stream: false },
       {
         headers: {
           'Authorization': `Bearer ${NVIDIA_API_KEY}`,
@@ -34,17 +27,16 @@ app.post('/v1/chat/completions', async (req, res) => {
       }
     );
 
-    // Форматируем ответ под OpenAI API
     res.json({
       id: `chatcmpl-${Date.now()}`,
       object: 'chat.completion',
       created: Math.floor(Date.now() / 1000),
-      model: model,
+      model: NIM_MODEL_ID,
       choices: [{
         index: 0,
         message: {
           role: 'assistant',
-          content: response.data.choices[0]?.message?.content || response.data.content || ''
+          content: response.data.choices?.[0]?.message?.content || response.data.content || ''
         },
         finish_reason: 'stop'
       }],
@@ -55,10 +47,10 @@ app.post('/v1/chat/completions', async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Ошибка прокси:', error.response?.data || error.message);
+    console.error('Ошибка:', error.response?.data || error.message);
     res.status(error.response?.status || 500).json({
       error: {
-        message: error.response?.data?.detail || 'Ошибка генерации',
+        message: error.response?.data?.detail || error.message || 'Ошибка генерации',
         type: 'proxy_error',
         code: error.response?.status || 500
       }
@@ -66,8 +58,7 @@ app.post('/v1/chat/completions', async (req, res) => {
   }
 });
 
-// Health check для хостинга
-app.get('/health', (req, res) => res.json({ status: 'ok', model: 'deepseek/deepseek-chat' }));
+app.get('/health', (req, res) => res.json({ status: 'ok', model: NIM_MODEL_ID }));
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`✅ Прокси запущен. Модель: deepseek/deepseek-chat`));
+app.listen(PORT, () => console.log(`✅ Прокси запущен. Модель: ${NIM_MODEL_ID}`));
